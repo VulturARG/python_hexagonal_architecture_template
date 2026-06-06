@@ -20,10 +20,9 @@ triggers:
 
 ## 0. Runtime Requirements
 
-- **Python version**: 3.14+ (project venv: CPython 3.14.5)
-- In Python 3.14, PEP 649 makes annotation evaluation lazy by default. If a method name shadows a built-in type (e.g., a method named `dict`), use a string annotation `-> "dict[str, str]"` to avoid the PEP 649 naming collision. `get_type_hints()` resolves string annotations in the module's global namespace where the built-in is available.
-- `dict[str, T]`, `list[T]`, and other built-in generics are natively subscriptable at runtime.
-- **FORBIDDEN: `from __future__ import annotations`** — do NOT add this import for defensive reasons or to "fix" PEP 649 issues. Solve naming collisions with string annotations or by renaming the identifier instead.
+- **Python version**: 3.10+
+- `dict[str, T]`, `list[T]`, and other built-in generics are natively subscriptable at runtime (since Python 3.9).
+- `from __future__ import annotations` (PEP 563) is optional — use it only when you need forward references. Do not add it defensively or habitually to every file.
 
 ---
 
@@ -48,7 +47,7 @@ src/
 │   └── <entity_name>/                       # One folder per entity
 │       ├── <port>.py    (only if needed)
 │       └── <service>.py
-├── applications/
+├── application/
 └── infrastructure/
     ├── adapters/
     │   └── <entity_name>/                   # Mirrors the domain entity folder name
@@ -284,17 +283,17 @@ A wiring assembles all the dependencies a use case needs. It is the only place w
 ### Structure
 
 ```python
-from src.applications.register_user_use_case import RegisterUserUseCase
+from src.application.register_user_use_case import RegisterUserUseCase
 from src.domain.user.user_repository import UserRepository
 from src.infrastructure.adapters.user.postgres_user_adapter import PostgresUserAdapter
 
 
 class RegisterUserUseCaseWiring:
-    def get_register_user_use_case(self) -> RegisterUserUseCase:
-        return RegisterUserUseCase(user_repository=self._user_repository())
+  def get_register_user_use_case(self) -> RegisterUserUseCase:
+    return RegisterUserUseCase(user_repository=self._user_repository())
 
-    def _user_repository(self) -> UserRepository:
-        return PostgresUserAdapter()
+  def _user_repository(self) -> UserRepository:
+    return PostgresUserAdapter()
 ```
 
 Rules:
