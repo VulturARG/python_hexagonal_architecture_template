@@ -22,6 +22,17 @@ triggers:
 
 - **Python version**: 3.10+
 - `dict[str, T]`, `list[T]`, and other built-in generics are natively subscriptable at runtime (since Python 3.9).
+- **PEP 604 Union Types**: Avoid the use of `Optional[Type]`. Use `Type | None` instead.
+  - **Forbidden:**
+    ```python
+    def f(parameter: Optional[int]) -> Optional[str]:
+    def f(parameter: Optional[int] = None) -> Optional[str] = None:
+    ```
+  - **Allowed:**
+    ```python
+    def f(parameter: int | None) -> str | None:
+    def f(parameter: int | None = None) -> str | None = None:
+    ```
 - `from __future__ import annotations` (PEP 563) is optional — use it only when you need forward references. Do not add it defensively or habitually to every file.
 
 ---
@@ -101,6 +112,9 @@ from unittest import TestCase
 from typing import get_type_hints
 file_path = path(...)
 ```
+
+- **No local imports**: Never use imports inside functions or methods. All imports must be placed at the top of the file.
+- **No wildcard imports**: Never use wildcard imports (`from <module> import *`).
 
 ---
 
