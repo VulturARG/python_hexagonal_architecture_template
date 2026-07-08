@@ -85,7 +85,105 @@ src/
 
 ---
 
-## 2. Import Invariants (STRICT — unidirectional)
+## 2. Core Concepts
+
+### Use case
+
+> The unit of logic representing a specific action the system must perform. It acts as the business orchestrator: it receives a request, coordinates the execution of one or more domain services, and returns a result.
+>
+> It must NOT contain business logic of its own. Its responsibility is to coordinate the execution flow, delegating all business logic to the domain services.
+
+**Responsibilities:**
+
+- Receive the input data.
+- Invoke one or more domain services.
+- Coordinate the execution order.
+- Return the result.
+
+**Must NOT:**
+
+- Implement business rules.
+- Access databases directly.
+- Know about frameworks or infrastructure.
+
+### Domain service
+
+> Represents a business action or process that does not naturally belong to a single entity, or that requires collaboration between multiple domain entities.
+>
+> It also encapsulates business rules that need to access external resources through ports (interfaces), keeping the domain independent of any technology.
+
+> **Naming note**: "Domain service" is a *role*, not a name suffix. Per Section 5, these classes use a descriptive name with **NO `Service` suffix** (e.g., `PasswordHasher`, `OrderProcessor`).
+
+Ports are interfaces (typically abstract classes or protocols) injected through the service constructor.
+
+A service's methods must receive only domain objects, their own DTOs, or primitive types. They must never depend on objects coming from frameworks, ORMs, HTTP controllers, GUIs, or other external technologies.
+
+**Responsibilities:**
+
+- Implement business rules.
+- Coordinate domain entities.
+- Use ports when infrastructure is needed.
+- Keep technological independence.
+
+**Must NOT:**
+
+- Know about HTTP.
+- Know about Odoo, Django, FastAPI, Flask, etc.
+- Know about SQL or persistence details.
+
+### Adapter
+
+> The component responsible for translating data between an external technology and the format used by the domain.
+>
+> It fully isolates the business logic from frameworks, databases, APIs, external systems, or user interfaces.
+
+It typically implements a port defined by the domain or the application layer.
+
+An adapter can be, for example:
+
+- a database repository;
+- a REST client to an external API;
+- an SMTP client;
+- a message-queue producer (e.g., Kafka);
+- a gateway to another system.
+
+Its sole responsibility is to translate data and delegate the work to the domain.
+
+> **Driven vs. driving**: The adapters modeled here are *driven* (secondary) adapters — they implement a domain port on the output side (database, external API, email, queue). The *driving* (primary) side — HTTP routes, CLI, message consumers that trigger a use case — belongs to the framework, which enters through the **Wiring** (Section 8) to build and invoke the use case, rather than being wired as a domain-port adapter.
+
+**Responsibilities:**
+
+- Implement a port.
+- Convert external data into domain DTOs or entities.
+- Convert domain responses into the format expected by the external system.
+
+**Must NOT:**
+
+- Contain business rules.
+- Decide business processes.
+- Alter the domain's functional behavior.
+
+### Dependency flow
+
+```
+Framework
+    │  builds & invokes the use case through its Wiring (Section 8)
+    ▼
+Use Case
+    │  calls
+    ▼
+Domain Service ──── uses ────> Port (interface, defined by the domain)
+    │                             ▲
+    │ uses                        │ implements
+    ▼                             │
+Entities                 Infrastructure Adapter
+```
+
+Dependencies always point toward the domain. The domain never knows about adapters or frameworks. Entities are the innermost core and depend on nothing. The framework never calls an adapter or the domain directly: it goes through the **Wiring** (Section 8), which builds the fully assembled use case and hands it back to be invoked. The **use case is a thin orchestrator**: it only coordinates domain services and never touches ports or infrastructure directly. Ports are interfaces **defined by** the domain and **used by** domain services (never by use cases directly); infrastructure adapters **implement** them (dependency inversion). This keeps the business logic decoupled and lets you replace technologies without touching the core.
+
+---
+
+## 3. Import Invariants (STRICT — unidirectional)
 
 | Layer | Allowed imports | Forbidden imports |
 |---|---|---|
@@ -95,7 +193,7 @@ src/
 
 ---
 
-## 3. Import Style
+## 4. Import Style
 
 Always import specific names, never the module itself. This applies to **all** modules including stdlib:
 
@@ -118,7 +216,7 @@ file_path = path(...)
 
 ---
 
-## 4. Naming Conventions
+## 5. Naming Conventions
 
 ### Language and readability
 
@@ -176,7 +274,7 @@ MyDatabaseRepository   → MyDatabaseAdapter
 
 ---
 
-## 5. Error Handling
+## 6. Error Handling
 
 ### Exception hierarchy (`src/domain/exceptions/base_src_error.py`)
 
@@ -222,21 +320,40 @@ Rules:
 
 ### Rules by layer
 
-| Layer | Approach |
-|---|---|
-| `src/domain/` and `src/applications/` | Raise domain-group-specific subclasses of `BaseSrcError` |
-| `src/infrastructure/adapters/` | Decorate methods with `@generic_error_handler` |
+`@generic_error_handler` is applied in **exactly one place**: the use case.
 
-`@generic_error_handler` (from `src/domain/exceptions/decorators/generic_error_handler.py`):
+| Layer | Approach | `@generic_error_handler` |
+|---|---|---|
+| **Use case** (application orchestrator) | Decorate the use case's public entry method. It is the single error boundary that normalizes anything unexpected into the `BaseSrcError` hierarchy. | ✅ **MANDATORY — only here** |
+| `src/domain/` (entities, domain services) | Raise domain-group-specific subclasses of `BaseSrcError`. | ❌ **NEVER** |
+| `src/infrastructure/adapters/` | Raise domain-group-specific subclasses of `BaseSrcError` where meaningful; let any other exception propagate up to the use case boundary. | ❌ **NEVER** |
+
+> **MANDATORY**: `@generic_error_handler` goes **only** on the use case's public method. It MUST NEVER be placed on a domain service, an entity, or an adapter. Domain services and adapters raise specific exceptions (or let them propagate); the use case is the single funnel where unexpected errors are caught and wrapped.
+
+`@generic_error_handler` (from `src/domain/exceptions/decorators/generic_error_handler.py`), applied to the use case's public method:
 - Re-raises `SrcBaseWarning`, `SrcBaseNotAuthorized`, `SrcBaseNotFound` as-is.
 - Logs and re-raises any other `BaseSrcError`.
 - Wraps unexpected `Exception` in `SrcGenericError` and re-raises.
+
+```python
+from src.domain.exceptions.decorators.generic_error_handler import generic_error_handler
+from src.domain.user.user_registrar import UserRegistrar
+
+
+class RegisterUserUseCase:
+    def __init__(self, user_registrar: UserRegistrar) -> None:
+        self._user_registrar = user_registrar
+
+    @generic_error_handler
+    def execute(self, registration: UserRegistrationDTO) -> None:
+        self._user_registrar.register(registration)
+```
 
 Entry points (controllers, CLI) catch `BaseSrcError` subclasses and map them to delivery-specific formats (HTTP codes, CLI exit codes). Never let `BaseSrcError` propagate raw to the user.
 
 ---
 
-## 6. Testing Rules
+## 7. Testing Rules
 
 ### Location and framework
 
@@ -298,13 +415,17 @@ A wiring assembles all the dependencies a use case needs. It is the only place w
 
 ```python
 from src.application.register_user_use_case import RegisterUserUseCase
+from src.domain.user.user_registrar import UserRegistrar
 from src.domain.user.user_repository import UserRepository
 from src.infrastructure.adapters.user.postgres_user_adapter import PostgresUserAdapter
 
 
 class RegisterUserUseCaseWiring:
   def get_register_user_use_case(self) -> RegisterUserUseCase:
-    return RegisterUserUseCase(user_repository=self._user_repository())
+    return RegisterUserUseCase(user_registrar=self._user_registrar())
+
+  def _user_registrar(self) -> UserRegistrar:
+    return UserRegistrar(user_repository=self._user_repository())
 
   def _user_repository(self) -> UserRepository:
     return PostgresUserAdapter()
@@ -313,7 +434,8 @@ class RegisterUserUseCaseWiring:
 Rules:
 - One public method that returns the fully assembled use case. Named `get_<use_case_snake_case>()`.
 - One private method per dependency (`_<dependency_name>()`), named after what it builds.
-- Private methods return the **port type** (interface), not the concrete adapter.
+- Assemble the chain **port → domain service → use case**: the use case receives domain services, and each domain service receives the ports it needs. Never inject a port directly into a use case.
+- Methods that build an **adapter** return the **port type** (interface), not the concrete adapter. Methods that build a **domain service** return the concrete service type.
 - The wiring class has no business logic — only object creation and wiring.
 - Constructor parameters (`__init__`) are allowed only for runtime values (e.g., timestamps, config) that cannot be resolved statically.
 
@@ -336,7 +458,7 @@ This pattern isolates the test from the database while reusing the full wiring s
 
 ---
 
-## 7. Other Rules
+## 9. Other Rules
 
 - No `print()` for debugging.
 - Do not write inline comments (`#`) in production code. Names and structure must be self-explanatory.
